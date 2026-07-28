@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 图书翻译与译后编辑工作台 V4.2 (PDF深度排版优化版)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 CDN -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- JSZip CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Compromise CDN -->
+    <script src="https://unpkg.com/compromise"></script>
+    <!-- OpenCC CDN -->
+    <script src="https://unpkg.com/opencc-js@1.0.5/dist/umd/full.js"></script>
+    <!-- PDF.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        [v-cloak] { display: none; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .highlight-term { display: inline-block; transition: all 0.2s; }
+        .highlight-term:hover { transform: translateY(-1px); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-700 h-screen flex flex-col overflow-hidden font-sans antialiased">
+    <div id="app" v-cloak class="h-full flex flex-col">
+        <!-- 顶部清新导航栏 -->
+        <header class="bg-white border-b border-slate-200 h-16 px-6 flex items-center justify-between shadow-sm shrink-0 z-10">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-600 shadow-sm">
+                    <i class="fa-solid fa-book-open-reader text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-extrabold tracking-wide bg-gradient-to-r from-teal-600 via-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                        AI 图书翻译与译后编辑工作台 <span class="text-xs px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-semibold ml-1.5 shadow-xs">V4.2 PDF深度优化版</span>
+                    </h1>
+                    <p class="text-[11px] text-slate-400 font-medium">支持 DeepSeek / Claude / ChatGPT / Gemini · 独创跨行断词无缝重组 & 自定义切章</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-3">
+                <label class="flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg border border-slate-200 cursor-pointer transition font-medium text-slate-600">
+                    <input type="checkbox" v-model="autoConvertToSimp" class="rounded text-teal-600 focus:ring-0 w-3.5 h-3.5" />
+                    <span><i class="fa-solid fa-language text-teal-600 mr-1"></i>导入自动转简体</span>
+                </label>
+
+                <div v-if="chapters.length > 0" class="flex space-x-2">
+                    <button @click="exportFullEpub(false)" class="text-xs bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-lg transition font-medium flex items-center shadow-sm">
+                        <i class="fa-regular fa-file-lines mr-1.5 text-blue-500"></i>导出全本原文 (EPUB)
+                    </button>
+                    <button @click="exportFullEpub(true)" class="text-xs bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white px-3.5 py-1.5 rounded-lg transition font-semibold flex items-center shadow">
+                        <i class="fa-solid fa-wand-magic-sparkles mr-1.5 text-amber-300"></i>导出全本译后终稿 (EPUB)
+                    </button>
+                </div>
+                
+                <label class="cursor-pointer bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl text-sm font-semibold transition flex items-center shadow hover:shadow-md">
+                    <i class="fa-solid fa-cloud-arrow-up mr-2"></i>导入图书 (.EPUB / .PDF / .HTML / .TXT)
+                    <input type="file" @change="handleFileUpload" accept=".epub,.pdf,.html,.htm,.txt" class="hidden" />
+                </label>
+            </div>
+        </header>
+
+        <!-- 加载遮罩 -->
+        <div v-if="isLoading" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-white">
+            <div class="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center text-slate-800 max-w-sm border border-slate-100">
+                <i class="fa-solid fa-circle-notch fa-spin text-4xl text-teal-600 mb-4"></i>
+                <p class="text-base font-bold">{{ loadingText }}</p>
+                <p class="text-xs text-slate-400 mt-2 text-center">正在进行跨行断词重组与段落深度清洗...</p>
+            </div>
+        </div>
+
+        <!-- 重新切章弹窗 -->
+        <div v-if="showSplitModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fadeIn">
+            <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 border border-slate-100 text-slate-700">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-bold text-base text-slate-800 flex items-center"><i class="fa-solid fa-scissors text-teal-600 mr-2"></i>自定义章节切分设置</h3>
+                    <button @click="showSplitModal = false" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+                </div>
+                <p class="text-xs text-slate-500 mb-4 leading-relaxed">PDF或扫描版图书排版千奇百怪。系统已为你保留经过深度断词缝合的完整底稿，你可以自由选择最适合本书的切章方式：</p>
+                
+                <div class="space-y-3 mb-6">
+                    <!-- 智能识别 -->
+                    <label class="flex items-start space-x-3 p-3 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50 transition" :class="{'border-teal-500 bg-teal-50/30': splitMethod === 'auto'}">
+                        <input type="radio" v-model="splitMethod" value="auto" class="mt-0.5 text-teal-600 focus:ring-0" />
+                        <div class="text-xs">
+                            <div class="font-bold text-slate-700">🤖 升级版智能章节识别 (推荐)</div>
+                            <div class="text-slate-400 mt-0.5">自动匹配中英文 Chapter One~Twenty, 卷篇回部章, 独行罗马或阿拉伯数字标题。</div>
+                        </div>
+                    </label>
+
+                    <!-- 自定义关键词 -->
+                    <label class="flex items-start space-x-3 p-3 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50 transition" :class="{'border-teal-500 bg-teal-50/30': splitMethod === 'keyword'}">
+                        <input type="radio" v-model="splitMethod" value="keyword" class="mt-0.5 text-teal-600 focus:ring-0" />
+                        <div class="text-xs flex-1">
+                            <div class="font-bold text-slate-700">🔍 按自定义关键词/标志切分</div>
+                            <div class="text-slate-400 mt-0.5 mb-2">适合书中特有编号，如：Section、Part、回、或者小说特有章节前缀。</div>
+                            <input v-if="splitMethod === 'keyword'" v-model="splitKeyword" placeholder="输入关键词，例如：Section 或 Part" 
+                                   class="w-full px-2.5 py-1.5 border border-teal-300 rounded-lg text-xs bg-white focus:outline-none focus:border-teal-600 font-mono" />
+                        </div>
+                    </label>
+
+                    <!-- 按字数分块 -->
+                    <label class="flex items-start space-x-3 p-3 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50 transition" :class="{'border-teal-500 bg-teal-50/30': splitMethod === 'chunk'}">
+                        <input type="radio" v-model="splitMethod" value="chunk" class="mt-0.5 text-teal-600 focus:ring-0" />
+                        <div class="text-xs flex-1">
+                            <div class="font-bold text-slate-700">🔢 按固定字数均匀切块</div>
+                            <div class="text-slate-400 mt-0.5 mb-2">适合无明确目录排版的学术长篇报告、论文或小说。</div>
+                            <div v-if="splitMethod === 'chunk'" class="flex items-center space-x-2">
+                                <span>每块大约</span>
+                                <input v-model="splitChunkSize" type="number" step="500" min="1000" max="20000" 
+                                       class="w-20 px-2 py-1 border border-teal-300 rounded-lg text-xs bg-white text-center font-mono focus:outline-none" />
+                                <span>字</span>
+                            </div>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="flex justify-end space-x-2">
+                    <button @click="showSplitModal = false" class="px-4 py-2 rounded-xl text-xs font-medium text-slate-500 hover:bg-slate-100">取消</button>
+                    <button @click="executeChapterSplit(splitMethod)" class="px-5 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-500 text-white shadow-sm transition">开始重新切分</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模式切换器 -->
+        <div class="bg-slate-100 border-b border-slate-200 px-6 py-2 flex items-center justify-between shrink-0">
+            <div class="flex items-center space-x-1 bg-slate-200/80 p-1 rounded-xl">
+                <button @click="activeWorkspaceMode = 'prep'" :class="['px-5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-2', activeWorkspaceMode === 'prep' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600 hover:text-slate-900']">
+                    <i class="fa-solid fa-list-check text-teal-600"></i>
+                    <span>第一步：原文清洗 & 术语提示词生成</span>
+                </button>
+                <button @click="activeWorkspaceMode = 'mtpe'" :class="['px-5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-2', activeWorkspaceMode === 'mtpe' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600 hover:text-slate-900']">
+                    <i class="fa-solid fa-scale-balanced text-amber-500"></i>
+                    <span>第二步：四大 AI 译本比对 & 译后编辑 (MTPE)</span>
+                    <span v-if="currentChapter && currentChapter.finalTranslation" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="已进行人工编辑"></span>
+                </button>
+            </div>
+            
+            <div class="text-xs font-medium text-slate-500 flex items-center space-x-4">
+                <span v-if="currentChapter"><i class="fa-regular fa-bookmark mr-1 text-slate-400"></i>当前：{{ currentChapter.title }}</span>
+                <span><i class="fa-solid fa-tags mr-1 text-teal-500"></i>术语库：{{ glossary.length }} 条</span>
+            </div>
+        </div>
+
+        <!-- 主体工作区 -->
+        <main class="flex-1 flex overflow-hidden">
+            <!-- 左栏 -->
+            <aside class="w-[18%] bg-white border-r border-slate-200 flex flex-col shrink-0">
+                <div class="p-3 bg-slate-50 border-b border-slate-200 font-semibold text-xs text-slate-600 flex justify-between items-center">
+                    <span><i class="fa-solid fa-list-ul mr-1.5 text-teal-600"></i>书籍目录</span>
+                    <div class="flex space-x-2">
+                        <button v-if="rawFullText" @click="showSplitModal = true" class="text-[11px] bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded font-medium transition flex items-center" title="排版特殊可自定义切分章节">
+                            <i class="fa-solid fa-scissors mr-1"></i>重切
+                        </button>
+                        <button v-if="chapters.length > 0" @click="convertAllToSimplified" class="text-[11px] text-teal-600 hover:text-teal-700 font-medium hover:underline">
+                            转简
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                    <div v-if="chapters.length === 0" class="text-center py-16 text-slate-400 text-xs px-4">
+                        <i class="fa-regular fa-folder-open text-3xl mb-3 block text-slate-300"></i>
+                        支持 EPUB、PDF、HTML、TXT 导入
+                    </div>
+                    
+                    <button v-for="(chap, idx) in chapters" :key="chap.id" 
+                            @click="currentChapterIndex = idx"
+                            :class="['w-full text-left px-3 py-2.5 rounded-xl text-xs transition truncate block font-medium flex items-center justify-between', 
+                                     currentChapterIndex === idx ? 'bg-teal-50 text-teal-700 border-l-4 border-teal-600 shadow-xs' : 'hover:bg-slate-50 text-slate-600']"
+                            :title="chap.title">
+                        <span class="truncate flex-1"><span class="opacity-50 mr-1">{{ idx + 1 }}.</span> {{ chap.title }}</span>
+                        <i v-if="chap.finalTranslation && chap.finalTranslation.trim()" class="fa-solid fa-check-circle text-emerald-500 text-[11px] ml-1 shrink-0" title="已有终稿"></i>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- 第一步：准备与提示词台 -->
+            <div v-if="activeWorkspaceMode === 'prep'" class="flex-1 flex overflow-hidden bg-white">
+                <section class="w-[52%] flex flex-col border-r border-slate-200 shrink-0">
+                    <div class="px-4 py-2 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0 h-10">
+                        <h2 class="font-bold text-slate-700 text-xs flex items-center truncate max-w-sm">
+                            <i class="fa-solid fa-eye text-teal-600 mr-1.5"></i>{{ currentChapter ? currentChapter.title : '等待导入原文...' }}
+                        </h2>
+                        <div v-if="currentChapter" class="flex items-center space-x-1.5 text-[11px]">
+                            <span class="bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded">👤人名</span>
+                            <span class="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded">📍地名</span>
+                            <span class="bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded">🏢品牌</span>
+                            <span class="bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.5 rounded">🏷️术语</span>
+                            <span class="text-slate-400 ml-1">| 🖱️ 划选即查词</span>
+                        </div>
+                    </div>
+                    
+                    <div @mouseup="handleTextSelection" class="flex-1 overflow-y-auto p-6 font-serif leading-relaxed text-slate-800 text-base select-text whitespace-pre-line break-words bg-white">
+                        <div v-if="!currentChapter" class="h-full flex flex-col items-center justify-center text-slate-400 text-sm font-sans">
+                            <i class="fa-regular fa-file-lines text-4xl mb-3 text-slate-200"></i>
+                            <p>导入图书后，在此预览深度断词缝合与清洗干净的正文</p>
+                        </div>
+                        <div v-else v-html="renderedHighlightText"></div>
+                    </div>
+
+                    <div class="h-2/5 flex flex-col bg-slate-50 border-t border-slate-200">
+                        <div class="px-4 py-2 bg-slate-100 border-b border-slate-200 flex justify-between items-center shrink-0">
+                            <div class="flex items-center space-x-3">
+                                <span class="font-bold text-xs text-slate-700 flex items-center">
+                                    <i class="fa-solid fa-tags text-teal-600 mr-1.5"></i>专有名词识别与对照库
+                                </span>
+                                <button v-if="currentChapter && hasEntities" @click="autoExtractAllToGlossary" 
+                                        class="bg-teal-600 hover:bg-teal-500 text-white text-[11px] px-2.5 py-0.5 rounded-full font-medium transition shadow-xs flex items-center">
+                                    <i class="fa-solid fa-bolt mr-1 text-amber-300"></i>提取本章实体到术语表
+                                </button>
+                            </div>
+                            <div class="flex items-center space-x-3 text-xs">
+                                <button @click="openDictModal = !openDictModal" class="text-teal-600 hover:underline font-medium flex items-center">
+                                    <i class="fa-solid fa-magnifying-glass mr-1"></i>查词助手 <span v-if="dictSearchWord" class="w-2 h-2 rounded-full bg-teal-500 ml-1"></span>
+                                </button>
+                                <button @click="clearGlossary" class="text-red-500 hover:underline text-xs"><i class="fa-regular fa-trash-can mr-1"></i>清空</button>
+                            </div>
+                        </div>
+
+                        <div v-if="openDictModal" class="p-2 bg-teal-50/60 border-b border-teal-100 shrink-0 flex items-center justify-between text-xs">
+                            <div class="flex items-center space-x-2 flex-1 mr-2">
+                                <span class="font-semibold text-teal-800 shrink-0">查词:</span>
+                                <input v-model="dictSearchWord" @keyup.enter="lookupWord(dictSearchWord)" placeholder="划选文本或输入英文..." 
+                                       class="px-2.5 py-1 rounded border border-teal-300 flex-1 text-xs font-mono font-semibold bg-white focus:outline-none focus:border-teal-500" />
+                            </div>
+                            <div class="flex space-x-1.5 shrink-0">
+                                <button @click="openExternalDict('deepl')" class="bg-teal-600 hover:bg-teal-500 text-white px-2 py-1 rounded text-[11px] font-medium transition">DeepL</button>
+                                <button @click="openExternalDict('youdao')" class="bg-white hover:bg-teal-100 text-teal-700 px-2 py-1 rounded border border-teal-200 text-[11px] font-medium transition">有道</button>
+                                <button @click="openExternalDict('wiki')" class="bg-white hover:bg-teal-100 text-teal-700 px-2 py-1 rounded border border-teal-200 text-[11px] font-medium transition">维基</button>
+                                <button @click="addDictWordToGlossary" v-if="dictSearchWord" class="bg-amber-500 hover:bg-amber-400 text-white px-2 py-1 rounded text-[11px] font-medium transition flex items-center">
+                                    <i class="fa-solid fa-plus mr-1"></i>加术语
+                                </button>
+                            </div>
+                        </div>
+
+                        <div v-if="currentChapter && hasEntities" class="p-2 bg-white border-b border-slate-200 flex flex-wrap gap-1.5 items-center shrink-0 max-h-16 overflow-y-auto">
+                            <span class="text-[11px] text-slate-400 font-medium mr-1">智能识别:</span>
+                            <button v-for="item in currentChapter.entities.per" :key="'p_'+item" @click="addTermFromEntity(item, '人名')"
+                                    class="bg-blue-50 border border-blue-200 hover:border-blue-400 text-blue-700 text-xs px-2 py-0.5 rounded-md transition flex items-center">
+                                <i class="fa-solid fa-user text-[10px] mr-1 text-blue-400"></i>{{ item }} <i class="fa-solid fa-plus text-[10px] ml-1 text-slate-300"></i>
+                            </button>
+                            <button v-for="item in currentChapter.entities.loc" :key="'l_'+item" @click="addTermFromEntity(item, '地名')"
+                                    class="bg-emerald-50 border border-emerald-200 hover:border-emerald-400 text-emerald-700 text-xs px-2 py-0.5 rounded-md transition flex items-center">
+                                <i class="fa-solid fa-location-dot text-[10px] mr-1 text-emerald-400"></i>{{ item }} <i class="fa-solid fa-plus text-[10px] ml-1 text-slate-300"></i>
+                            </button>
+                            <button v-for="item in currentChapter.entities.org" :key="'o_'+item" @click="addTermFromEntity(item, '品牌/组织')"
+                                    class="bg-amber-50 border border-amber-200 hover:border-amber-400 text-amber-700 text-xs px-2 py-0.5 rounded-md transition flex items-center">
+                                <i class="fa-solid fa-tag text-[10px] mr-1 text-amber-400"></i>{{ item }} <i class="fa-solid fa-plus text-[10px] ml-1 text-slate-300"></i>
+                            </button>
+                        </div>
+
+                        <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                            <div class="flex gap-2 items-center bg-white p-2 rounded-xl border border-slate-200 shadow-xs">
+                                <input v-model="newTerm.source" @keyup.enter="addNewTerm" placeholder="英文/原词 (如 Jon Snow)" 
+                                       class="flex-1 text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-teal-500 font-mono" />
+                                <i class="fa-solid fa-arrow-right text-slate-300 text-xs"></i>
+                                <input v-model="newTerm.target" @keyup.enter="addNewTerm" placeholder="中文译名 (如 琼恩·雪诺)" 
+                                       class="flex-1 text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-teal-500" />
+                                <select v-model="newTerm.note" class="w-24 text-xs px-1.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-teal-500 text-slate-600 bg-white">
+                                    <option value="人名">👤 人名</option>
+                                    <option value="地名">📍 地名</option>
+                                    <option value="品牌/组织">🏢 品牌/组织</option>
+                                    <option value="特定术语">🏷️ 特定术语</option>
+                                </select>
+                                <button @click="addNewTerm" class="bg-slate-800 hover:bg-slate-700 text-white text-xs px-3.5 py-1.5 rounded-lg transition shrink-0 font-medium">
+                                    添加
+                                </button>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2 mt-2">
+                                <div v-for="(term, index) in glossary" :key="index" 
+                                     :class="['flex items-center justify-between px-3 py-1.5 rounded-xl border text-xs shadow-xs group transition',
+                                              term.note.includes('人') ? 'bg-blue-50/40 border-blue-200 hover:border-blue-400' : 
+                                              term.note.includes('地') ? 'bg-emerald-50/40 border-emerald-200 hover:border-emerald-400' : 
+                                              term.note.includes('组织') || term.note.includes('品牌') ? 'bg-amber-50/40 border-amber-200 hover:border-amber-400' : 'bg-white border-slate-200 hover:border-purple-400']">
+                                    <div class="flex items-center space-x-1.5 truncate flex-1 cursor-pointer" @click="dictSearchWord = term.source; openDictModal = true">
+                                        <span class="font-mono font-semibold text-teal-700 truncate max-w-[40%]">{{ term.source }}</span>
+                                        <span class="text-slate-300">→</span>
+                                        <input v-model="term.target" placeholder="【请补全译名】" 
+                                               class="font-medium text-slate-800 truncate max-w-[40%] bg-transparent border-b border-dashed border-slate-300 focus:border-teal-500 focus:outline-none px-0.5" />
+                                        <span class="text-[10px] px-1 rounded shrink-0 font-medium bg-slate-100 text-slate-500">{{ term.note || '术语' }}</span>
+                                    </div>
+                                    <button @click="removeTerm(index)" class="text-slate-300 group-hover:text-red-500 ml-2 transition">
+                                        <i class="fa-solid fa-xmark"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="w-[30%] flex flex-col bg-slate-50 shrink-0">
+                    <div class="p-3 bg-white border-b border-slate-200 shrink-0">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs font-bold text-slate-700 flex items-center">
+                                <i class="fa-solid fa-robot text-indigo-600 mr-1.5"></i>AI 专属提示词生成 (含 DeepSeek)
+                            </span>
+                            <span class="text-[11px] text-emerald-600 font-bold animate-fadeIn" v-if="copySuccess">{{ copySuccess }}</span>
+                        </div>
+                        <div class="grid grid-cols-4 gap-1 text-[11px] font-semibold text-slate-600 bg-slate-100 p-1 rounded-xl">
+                            <button @click="activePromptTab = 'deepseek'" :class="['py-1.5 rounded-lg transition flex items-center justify-center', activePromptTab === 'deepseek' ? 'bg-white text-blue-600 shadow-xs' : 'hover:text-slate-900']">
+                                <i class="fa-solid fa-brain mr-1 text-blue-500"></i>DeepSeek
+                            </button>
+                            <button @click="activePromptTab = 'claude'" :class="['py-1.5 rounded-lg transition flex items-center justify-center', activePromptTab === 'claude' ? 'bg-white text-amber-600 shadow-xs' : 'hover:text-slate-900']">
+                                <i class="fa-solid fa-sparkles mr-1 text-amber-500"></i>Claude
+                            </button>
+                            <button @click="activePromptTab = 'chatgpt'" :class="['py-1.5 rounded-lg transition flex items-center justify-center', activePromptTab === 'chatgpt' ? 'bg-white text-emerald-600 shadow-xs' : 'hover:text-slate-900']">
+                                <i class="fa-solid fa-bolt mr-1 text-emerald-500"></i>ChatGPT
+                            </button>
+                            <button @click="activePromptTab = 'gemini'" :class="['py-1.5 rounded-lg transition flex items-center justify-center', activePromptTab === 'gemini' ? 'bg-white text-indigo-600 shadow-xs' : 'hover:text-slate-900']">
+                                <i class="fa-solid fa-star mr-1 text-indigo-500"></i>Gemini
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex-1 p-4 overflow-y-auto bg-slate-900 text-slate-100 font-mono text-xs relative group">
+                        <button @click="copyPrompt" :disabled="!currentChapter"
+                                class="absolute top-3 right-3 bg-teal-600 hover:bg-teal-500 text-white px-3 py-1.5 rounded-lg text-xs font-sans font-semibold shadow transition flex items-center">
+                            <i class="fa-regular fa-copy mr-1.5"></i>一键复制 Prompt
+                        </button>
+                        
+                        <div v-if="!currentChapter" class="h-full flex items-center justify-center text-slate-500 font-sans text-center px-4">
+                            等待导入章节后，此处将自动结合你的术语表生成发给 AI 的最佳指令...
+                        </div>
+                        <pre v-else class="whitespace-pre-wrap leading-relaxed pr-24 text-[11px]">{{ currentPromptText }}</pre>
+                    </div>
+                    
+                    <div class="p-3 bg-white border-t border-slate-200 text-slate-500 text-xs flex justify-between items-center shrink-0">
+                        <span>💡 提示：复制发给 AI 后，切换至第二步 MTPE 台粘贴译本！</span>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 第二步：MTPE 译后编辑台 -->
+            <div v-if="activeWorkspaceMode === 'mtpe'" class="flex-1 flex overflow-hidden bg-slate-100">
+                <section class="w-[30%] bg-white border-r border-slate-200 flex flex-col shrink-0">
+                    <div class="px-4 py-2 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0 h-10">
+                        <span class="font-bold text-xs text-slate-700 flex items-center">
+                            <i class="fa-solid fa-file-lines text-slate-400 mr-1.5"></i>英文原文对照 (高亮词可点击)
+                        </span>
+                        <span class="text-xs text-slate-400" v-if="currentChapter">共 {{ currentChapter.cleanText.length }} 字</span>
+                    </div>
+                    <div @mouseup="handleTextSelection" class="flex-1 overflow-y-auto p-5 font-serif leading-relaxed text-slate-800 text-sm select-text whitespace-pre-line break-words bg-white">
+                        <div v-if="!currentChapter" class="text-center py-12 text-slate-400">请先导入图书</div>
+                        <div v-else v-html="renderedHighlightText"></div>
+                    </div>
+                </section>
+
+                <section class="w-[35%] bg-white border-r border-slate-200 flex flex-col shrink-0">
+                    <div class="px-4 py-2 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0 h-10">
+                        <span class="font-bold text-xs text-slate-700 flex items-center">
+                            <i class="fa-solid fa-cloud-arrow-down text-blue-500 mr-1.5"></i>AI 译本汇聚区 (点击模型粘贴)
+                        </span>
+                        <button v-if="currentChapter && currentChapter.translations[activeAiModelTab]" 
+                                @click="loadAiToFinal(activeAiModelTab)"
+                                class="text-[11px] bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 px-2 py-0.5 rounded font-semibold transition flex items-center shadow-xs"
+                                title="把当前显示的这个AI译文一键作为右侧人工修改的底稿">
+                            <i class="fa-solid fa-share font-bold mr-1"></i>以此译本作为编辑底稿
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-4 gap-1 p-1.5 bg-slate-100 border-b border-slate-200 shrink-0">
+                        <button @click="activeAiModelTab = 'deepseek'" :class="['py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center space-x-1', activeAiModelTab === 'deepseek' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:bg-slate-200/50']">
+                            <i class="fa-solid fa-brain text-blue-500"></i>
+                            <span>DeepSeek</span>
+                            <span v-if="currentChapter && currentChapter.translations.deepseek" class="w-1.5 h-1.5 rounded-full bg-blue-500 ml-1" title="已有内容"></span>
+                        </button>
+                        <button @click="activeAiModelTab = 'claude'" :class="['py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center space-x-1', activeAiModelTab === 'claude' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-600 hover:bg-slate-200/50']">
+                            <i class="fa-solid fa-sparkles text-amber-500"></i>
+                            <span>Claude</span>
+                            <span v-if="currentChapter && currentChapter.translations.claude" class="w-1.5 h-1.5 rounded-full bg-amber-500 ml-1" title="已有内容"></span>
+                        </button>
+                        <button @click="activeAiModelTab = 'chatgpt'" :class="['py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center space-x-1', activeAiModelTab === 'chatgpt' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-600 hover:bg-slate-200/50']">
+                            <i class="fa-solid fa-bolt text-emerald-500"></i>
+                            <span>ChatGPT</span>
+                            <span v-if="currentChapter && currentChapter.translations.chatgpt" class="w-1.5 h-1.5 rounded-full bg-emerald-500 ml-1" title="已有内容"></span>
+                        </button>
+                        <button @click="activeAiModelTab = 'gemini'" :class="['py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center space-x-1', activeAiModelTab === 'gemini' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600 hover:bg-slate-200/50']">
+                            <i class="fa-solid fa-star text-indigo-500"></i>
+                            <span>Gemini</span>
+                            <span v-if="currentChapter && currentChapter.translations.gemini" class="w-1.5 h-1.5 rounded-full bg-indigo-500 ml-1" title="已有内容"></span>
+                        </button>
+                    </div>
+
+                    <div class="flex-1 flex flex-col p-4 bg-white">
+                        <div v-if="!currentChapter" class="h-full flex items-center justify-center text-slate-400 text-xs">请先导入图书章节</div>
+                        <div v-else class="h-full flex flex-col">
+                            <textarea v-model="currentChapter.translations[activeAiModelTab]" 
+                                      :placeholder="`请将从 ${activeAiModelTab.toUpperCase()} 获取到的译文直接粘贴在这里...\n\n💡 提示：你可以把4个模型的译文都粘贴在不同标签页，方便随时切换比对！`"
+                                      class="flex-1 w-full p-3.5 border border-slate-200 rounded-xl focus:outline-none focus:border-teal-500 font-serif leading-relaxed text-slate-800 text-sm resize-none bg-slate-50/50 focus:bg-white transition shadow-inner"></textarea>
+                            <div class="flex justify-between items-center mt-2 text-[11px] text-slate-400">
+                                <span> 当前视图：{{ activeAiModelTab.toUpperCase() }} 译本</span>
+                                <button v-if="currentChapter.translations[activeAiModelTab]" @click="currentChapter.translations[activeAiModelTab] = ''" class="text-red-400 hover:underline">清空当前译本</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="w-[35%] bg-white flex flex-col shrink-0 shadow-lg relative">
+                    <div class="px-4 py-2 bg-teal-600 text-white flex justify-between items-center shrink-0 h-10">
+                        <span class="font-bold text-xs flex items-center">
+                            <i class="fa-solid fa-pen-nib mr-1.5 text-amber-300"></i>人工译后编辑台 (终稿定稿)
+                        </span>
+                        <div class="flex items-center space-x-2">
+                            <button v-if="currentChapter && currentChapter.finalTranslation" @click="exportChapterFinal('txt')" class="text-[11px] bg-teal-700 hover:bg-teal-800 text-white px-2 py-0.5 rounded font-medium transition">
+                                <i class="fa-regular fa-file-lines mr-1"></i>存单章TXT
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex-1 flex flex-col p-4 bg-white">
+                        <div v-if="!currentChapter" class="h-full flex items-center justify-center text-slate-400 text-xs">请先导入图书章节</div>
+                        <div v-else class="h-full flex flex-col">
+                            <textarea v-model="currentChapter.finalTranslation" 
+                                      placeholder="在这里进行你的人工润色、梳理与定稿...\n\n✨ 功能技巧：\n1. 点击中间AI汇聚区的“以此译本作为底稿”可一键导入这里。\n2. 也可以综合多个模型的精华，手工揉合出最终神作！\n3. 写的每一字都会自动持久化保存在浏览器里，随时导出全本终稿！"
+                                      class="flex-1 w-full p-4 border-2 border-teal-500/30 rounded-xl focus:outline-none focus:border-teal-600 font-serif leading-relaxed text-slate-900 text-base resize-none bg-teal-50/10 focus:bg-white transition shadow-inner"></textarea>
+                            
+                            <div class="flex justify-between items-center mt-2.5 px-1">
+                                <span class="text-xs font-semibold text-teal-700">
+                                    <i class="fa-solid fa-chart-simple mr-1"></i>终稿字数：{{ currentChapter.finalTranslation ? currentChapter.finalTranslation.length : 0 }} 字
+                                </span>
+                                <span class="text-[11px] text-emerald-600 font-medium flex items-center">
+                                    <i class="fa-solid fa-cloud-check mr-1"></i>自动持久化保存于本地
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, watch } = Vue;
+
+        const STOP_WORDS = new Set([
+            'the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','up','about','into','over','after',
+            'then','there','here','when','where','why','how','all','any','both','each','few','more','most','other','some','such',
+            'no','nor','not','only','own','same','so','than','too','very','can','will','just','should','now','this','that','these',
+            'those','he','she','it','they','them','his','her','its','their','what','which','who','whom','would','could','been',
+            'have','has','had','does','did','was','were','are','is','am','be','also','back','even','first','last','long','great'
+        ]);
+
+        createApp({
+            setup() {
+                const chapters = ref([]);
+                const currentChapterIndex = ref(0);
+                const glossary = ref([]);
+                const newTerm = ref({ source: '', target: '', note: '人名' });
+                
+                const activeWorkspaceMode = ref('prep'); 
+                const activePromptTab = ref('deepseek'); 
+                const activeAiModelTab = ref('deepseek'); 
+                
+                const isLoading = ref(false);
+                const loadingText = ref('');
+                const copySuccess = ref('');
+                const autoConvertToSimp = ref(true);
+                const openDictModal = ref(false);
+                const dictSearchWord = ref('');
+                
+                // ⭐️ 新增：自定义重新切章核心状态与原始底稿存储
+                const rawFullText = ref('');
+                const showSplitModal = ref(false);
+                const splitMethod = ref('auto');
+                const splitKeyword = ref('Chapter');
+                const splitChunkSize = ref(5000);
+
+                if (window.pdfjsLib) {
+                    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                }
+
+                let t2cnConverter = null;
+                const getSimpConverter = () => {
+                    if (t2cnConverter) return t2cnConverter;
+                    if (window.OpenCC) {
+                        try {
+                            t2cnConverter = window.OpenCC.Converter({ from: 't', to: 'cn' });
+                            return t2cnConverter;
+                        } catch (e) { console.warn("OpenCC init error:", e); }
+                    }
+                    return null;
+                };
+
+                const toSimplified = (text) => {
+                    if (!text) return "";
+                    const converter = getSimpConverter();
+                    return converter ? converter(text) : text;
+                };
+
+                onMounted(() => {
+                    const savedGlossary = localStorage.getItem('cat_glossary_v4');
+                    if (savedGlossary) {
+                        try { glossary.value = JSON.parse(savedGlossary); } catch (e) {}
+                    }
+                    setTimeout(() => { getSimpConverter(); }, 500);
+                });
+
+                watch(glossary, (newVal) => {
+                    localStorage.setItem('cat_glossary_v4', JSON.stringify(newVal));
+                }, { deep: true });
+
+                const currentChapter = computed(() => {
+                    return chapters.value[currentChapterIndex.value] || null;
+                });
+
+                const hasEntities = computed(() => {
+                    if (!currentChapter.value) return false;
+                    const ent = currentChapter.value.entities;
+                    return (ent.per && ent.per.length > 0) || (ent.loc && ent.loc.length > 0) || (ent.org && ent.org.length > 0);
+                });
+
+                const renderedHighlightText = computed(() => {
+                    if (!currentChapter.value) return "";
+                    let text = currentChapter.value.cleanText;
+                    text = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                    
+                    const validTerms = glossary.value.filter(g => {
+                        if (!g.source || g.source.trim().length <= 1) return false;
+                        return !STOP_WORDS.has(g.source.trim().toLowerCase());
+                    });
+                    
+                    if (validTerms.length === 0) return text;
+                    validTerms.sort((a, b) => b.source.length - a.source.length);
+                    
+                    const placeholders = [];
+                    validTerms.forEach((term) => {
+                        const escaped = term.source.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const isEnglishWord = /^[A-Za-z0-9\s.-]+$/.test(term.source.trim());
+                        const regexStr = isEnglishWord ? `\\b${escaped}\\b` : escaped;
+                        const regex = new RegExp(`(${regexStr})`, 'gi');
+                        
+                        let colorClass = "bg-purple-100 text-purple-900 border-purple-400";
+                        if (term.note) {
+                            if (term.note.includes('人')) colorClass = "bg-blue-100 text-blue-900 border-blue-400";
+                            else if (term.note.includes('地')) colorClass = "bg-emerald-100 text-emerald-900 border-emerald-400";
+                            else if (term.note.includes('组织') || term.note.includes('品牌')) colorClass = "bg-amber-100 text-amber-900 border-amber-400";
+                        }
+                        
+                        text = text.replace(regex, (match) => {
+                            const ph = `___GLOSSARY_TERM_${placeholders.length}___`;
+                            placeholders.push(`<span class="highlight-term px-1 my-0.5 rounded border-b-2 ${colorClass} font-semibold cursor-pointer shadow-xs" title="目标译名 -> ${term.target || '尚未填写'} [${term.note || '术语'}]">${match}<span class="text-[11px] ml-1 font-normal opacity-80">(${term.target || '未填'})</span></span>`);
+                            return ph;
+                        });
+                    });
+                    
+                    placeholders.forEach((html, idx) => {
+                        text = text.replace(`___GLOSSARY_TERM_${idx}___`, html);
+                    });
+                    
+                    return text;
+                });
+
+                const activeGlossaryText = computed(() => {
+                    const valid = glossary.value.filter(g => g.source && g.target);
+                    if (valid.length === 0) return "（本章暂无设定强制对照术语，请依简体中文出版规范自然翻译）";
+                    return valid.map(g => `- "${g.source}" 必须翻译为 => "${g.target}" ${g.note ? ' // '+g.note : ''}`).join('\n');
+                });
+
+                const currentPromptText = computed(() => {
+                    if (!currentChapter.value) return "";
+                    const text = currentChapter.value.cleanText;
+                    
+                    if (activePromptTab.value === 'deepseek') {
+                        return `### 角色定义与指令\n你是一位精通中英双语的顶级文学翻译官与出版审校专家（DeepSeek-V3/R1）。请将下列文字翻译为优雅、流畅、符合现代规范简体中文出版标准的文稿。\n\n### 专有名词对照表 (强制执行)\n遇到以下专有名词时，严禁改动，必须映射为指定的中文目标词：\n${activeGlossaryText.value}\n\n### 核心执行准则\n1. 严格逐段翻译，绝对不可合并、漏译或随意删减段落。\n2. 深刻把握原文语境与人物口吻，译文需行文地道严谨，拒绝欧化句式。\n3. 直接输出【规范简体中文】翻译结果，切勿包含任何思维过程、引言或注释说明。\n\n### 待翻译正文\n${text}`;
+                    } else if (activePromptTab.value === 'claude') {
+                        return `<instruction>\n你是一位精通跨文化文学与科技文本翻译的 AI 翻译大师。请仔细阅读下方由 <source_text> 标签包裹的英文内容，将其翻译成极具韵味与准确度的地道【规范简体中文】。\n</instruction>\n\n<glossary_rules>\n为保证全书译名一致性，遇到以下专有名词时，请强制应用给定的目标译文：\n${activeGlossaryText.value}\n</glossary_rules>\n\n<formatting_rules>\n- 必须保留原文的段落间距与格式层级。\n- 严格使用简体中文输出。\n- 请仅在 <translation> 标签中直接输出完整的翻译结果，不要输出多余的解释说明。\n</formatting_rules>\n\n<source_text>\n${text}\n</source_text>`;
+                    } else if (activePromptTab.value === 'chatgpt') {
+                        return `你是一位拥有20年经验的资深文学图书翻译专家与知名畅销书译者。请将以下待翻译文本翻译为自然、优雅、符合现代规范简体中文文学出版习惯的译文。\n\n【术语与专有名词强制对照表】（遇到以下词汇必须严守此表，不得擅自更改）：\n${activeGlossaryText.value}\n\n【翻译要求】：\n1. 忠实于原文的自然段落结构与排版，切勿合并或漏译段落。\n2. 人物对话需符合汉语言口语习惯，体现人物身份与语调。\n3. 必须输出【规范简体中文】。\n4. 直接输出译文，无需附带任何前言、总结或解释说明。\n\n【待翻译原文】：\n\n${text}`;
+                    } else {
+                        return `# Role & Task\n你作为该顶级出版物项目的首席文学翻译官，需利用你超强的大上下文理解能力与文字修辞能力，将下列章节内容高质量译为【规范简体中文】。\n\n## 专有名词对照库 (Glossary Constraints)\n翻译时遇到以下英文原文，必须强制映射为指定的中文译名：\n${activeGlossaryText.value}\n\n## 执行准则\n- 确保语言信达雅，行文流畅，彻底摆脱机械翻译的语病和欧化句式。\n- 原文的高潮语调、幽默感或修辞隐喻应当予以准确的传达。\n- 译文必须统一采用中国大陆规范简体汉字。\n\n## 原文正文\n${text}`;
+                    }
+                });
+
+                const loadAiToFinal = (modelKey) => {
+                    if (!currentChapter.value) return;
+                    const aiText = currentChapter.value.translations[modelKey];
+                    if (!aiText || !aiText.trim()) {
+                        alert(`当前 [${modelKey.toUpperCase()}] 模型还没有粘贴译文，请先在下方输入框粘贴！`);
+                        return;
+                    }
+                    if (currentChapter.value.finalTranslation && currentChapter.value.finalTranslation.trim()) {
+                        if (!confirm("人工终稿区当前已经有文字了，确定要把这个AI译本载入并覆盖过去吗？")) return;
+                    }
+                    currentChapter.value.finalTranslation = aiText;
+                };
+
+                const handleTextSelection = () => {
+                    const selection = window.getSelection().toString().trim();
+                    if (selection && selection.length > 0 && selection.length < 40) {
+                        dictSearchWord.value = selection;
+                        openDictModal.value = true;
+                    }
+                };
+
+                const addDictWordToGlossary = () => {
+                    if (!dictSearchWord.value.trim()) return;
+                    if (!glossary.value.some(g => g.source.toLowerCase() === dictSearchWord.value.trim().toLowerCase())) {
+                        glossary.value.unshift({ source: dictSearchWord.value.trim(), target: '', note: '特定术语' });
+                    }
+                };
+
+                const exportChapterFinal = (type) => {
+                    if (!currentChapter.value || !currentChapter.value.finalTranslation) return;
+                    const chap = currentChapter.value;
+                    const filename = `${toSimplified(chap.title)}_译后终稿.${type}`;
+                    const content = `${toSimplified(chap.title)}\n\n${chap.finalTranslation}`;
+                    
+                    const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = filename;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                };
+
+                const exportFullEpub = async (isFinal = false) => {
+                    if (chapters.value.length === 0) return;
+                    
+                    if (isFinal) {
+                        const editedCount = chapters.value.filter(c => c.finalTranslation && c.finalTranslation.trim()).length;
+                        if (editedCount === 0) {
+                            alert("你还没有进行任何章节的人工译后编辑！请在第二步【MTPE 台】右侧的终稿区填写文字后，再导出译后终稿。");
+                            return;
+                        }
+                        if (editedCount < chapters.value.length) {
+                            if (!confirm(`提示：全书共 ${chapters.value.length} 章，目前你只完成了 ${editedCount} 章的人工终稿定稿。\n\n未进行译后编辑的章节，系统会自动为你使用该章节已有的 [DeepSeek / Claude 等AI译文] 或 [原文] 进行智能兜底。确定要直接打包导出吗？`)) return;
+                        }
+                    }
+
+                    isLoading.value = true;
+                    loadingText.value = isFinal ? '正在将全书【译后编辑终稿】精心封装为排版优美的 EPUB 电子书...' : '正在将全书原文打包为 EPUB...';
+                    
+                    try {
+                        const zip = new JSZip();
+                        zip.file("mimetype", "application/epub+zip");
+                        zip.file("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+    <rootfiles>
+        <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+    </rootfiles>
+</container>`);
+                        
+                        const oebps = zip.folder("OEBPS");
+                        let manifestXml = '';
+                        let spineXml = '';
+                        let navPoints = '';
+                        
+                        chapters.value.forEach((chap, idx) => {
+                            const fileId = `chap_${idx + 1}`;
+                            const fileName = `${fileId}.xhtml`;
+                            const title = toSimplified(chap.title);
+                            
+                            let textToExport = chap.cleanText;
+                            if (isFinal) {
+                                if (chap.finalTranslation && chap.finalTranslation.trim()) {
+                                    textToExport = chap.finalTranslation;
+                                } else if (chap.translations.deepseek) { textToExport = chap.translations.deepseek; }
+                                else if (chap.translations.claude) { textToExport = chap.translations.claude; }
+                                else if (chap.translations.chatgpt) { textToExport = chap.translations.chatgpt; }
+                                else if (chap.translations.gemini) { textToExport = chap.translations.gemini; }
+                            }
+
+                            const pTags = textToExport.split(/\r?\n+/).map(p => p.trim()).filter(p => p.length > 0).map(p => `<p style="text-indent: 2em; margin-bottom: 1em; line-height: 1.8;">${p}</p>`).join('\n');
+                            
+                            const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-CN">
+<head><title>${title}</title><style>body { font-family: sans-serif; padding: 5%; color: #333; }</style></head>
+<body><h1 style="text-align: center; margin-bottom: 2em; color: #0d9488;">${title}</h1>${pTags}</body>
+</html>`;
+                            oebps.file(fileName, xhtml);
+                            
+                            manifestXml += `    <item id="${fileId}" href="${fileName}" media-type="application/xhtml+xml"/>\n`;
+                            spineXml += `    <itemref idref="${fileId}"/>\n`;
+                            navPoints += `    <navPoint id="nav_${idx + 1}" playOrder="${idx + 1}">
+      <navLabel><text>${title}</text></navLabel>
+      <content src="${fileName}"/>
+    </navPoint>\n`;
+                        });
+                        
+                        manifestXml += `    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>\n`;
+                        const rawTitle = chapters.value[0] ? chapters.value[0].title.replace(/第.*章|[\s]/g, '') : "AI翻译工作台导出";
+                        const bookTitle = toSimplified(rawTitle || "AI翻译图书") + (isFinal ? "_译后终稿排版" : "_原文");
+                        
+                        const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookID" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>${bookTitle}</dc:title>
+    <dc:language>zh-CN</dc:language>
+    <dc:creator>AI翻译工作台 V4 (译后编辑终稿)</dc:creator>
+  </metadata>
+  <manifest>\n${manifestXml}  </manifest>
+  <spine toc="ncx">\n${spineXml}  </spine>
+</package>`;
+                        oebps.file("content.opf", opf);
+                        
+                        const ncx = `<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head><meta name="dtb:uid" content="urn:uuid:12345678"/></head>
+  <docTitle><text>${bookTitle}</text></docTitle>
+  <navMap>\n${navPoints}  </navMap>
+</ncx>`;
+                        oebps.file("toc.ncx", ncx);
+                        
+                        const blob = await zip.generateAsync({ type: "blob", mimeType: "application/epub+zip" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${bookTitle}.epub`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                    } catch (e) {
+                        alert("生成 EPUB 失败: " + e.message);
+                    } finally {
+                        isLoading.value = false;
+                    }
+                };
+
+                // ⭐️ 核心技巧：断词深度清洗与自然段落缝合算法
+                const cleanAndDehyphenateText = (text) => {
+                    let t = text;
+                    // 1. 跨行/跨页软连字符缝合：如 "trans-\nlation", "trans- \nlation", "trans -\r\n lation" -> "translation"
+                    t = t.replace(/([a-zA-Z]{2,})\s*-\s*\r?\n\s*([a-zA-Z]{2,})/g, '$1$2');
+                    // 2. 修复行尾连字符在提取时被加上空格的问题：如 "trans- lation" -> "translation"
+                    t = t.replace(/([a-zA-Z]{3,})-\s+([a-zA-Z]{3,})/g, '$1$2');
+                    // 3. 将一个自然段内部、非段落分隔的硬回车变成空格，让被截断的句子首尾连合
+                    t = t.replace(/([a-zA-Z0-9,;:"'）】])\r?\n(?!\r?\n)\s*([a-zA-Z0-9（【“'"])/g, '$1 $2');
+                    // 4. 清理行内连续空格与多余空行
+                    t = t.replace(/\r?\n{3,}/g, '\n\n');
+                    t = t.replace(/[ \t]{2,}/g, ' ');
+                    return t.trim();
+                };
+
+                // ⭐️ 核心技巧：升级版章节智能拆分引擎
+                const executeChapterSplit = (method = 'auto') => {
+                    if (!rawFullText.value) return;
+                    chapters.value = [];
+                    const text = rawFullText.value;
+                    
+                    if (method === 'auto') {
+                        // 覆盖中英文 Chapter 1~30, 卷篇回部章, 独行罗马/阿拉伯数字
+                        const regex = /(?:^|\n\n+|\n)\s*((?:第[0-9零一二三四五六七八九十百千两]+[章节卷回部篇]|Chapter\s+(?:[0-9IVXLCDM]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty|Thirty)|PROLOGUE|EPILOGUE|PREFACE|INTRODUCTION|FOREWORD|AFTERWORD|BOOK\s+[0-9IVXLCDM]+|PART\s+[0-9IVXLCDM]+)[^\n]*)/gim;
+                        let matches = [...text.matchAll(regex)];
+                        
+                        if (matches.length <= 1) {
+                            // 第二级容错：尝试匹配大写的章节编号标题 (如 "1. The Beginning" 或 "I. THE WORLD")
+                            const regex2 = /(?:^|\n\n+)\s*((?:[0-9]{1,2}|[IVXLCDM]{1,5})[.\s][A-Z\u4e00-\u9fa5][^\n]{1,40})(?=\r?\n|$)/gm;
+                            matches = [...text.matchAll(regex2)];
+                        }
+                        
+                        if (matches.length > 1) {
+                            for (let i = 0; i < matches.length; i++) {
+                                const title = matches[i][1].trim();
+                                const startIndex = matches[i].index;
+                                const endIndex = (i + 1 < matches.length) ? matches[i + 1].index : text.length;
+                                let chapText = text.slice(startIndex, endIndex).replace(title, '').trim();
+                                if (chapText.length > 20) {
+                                    chapters.value.push({
+                                        id: 'chap_' + (chapters.value.length + 1),
+                                        title: title.slice(0, 35),
+                                        cleanText: chapText,
+                                        entities: extractEntities(chapText),
+                                        translations: { chatgpt: '', claude: '', gemini: '', deepseek: '' },
+                                        finalTranslation: ''
+                                    });
+                                }
+                            }
+                        } else {
+                            // 智能降级为字数切块
+                            executeChapterSplit('chunk');
+                            alert("提示：未能从该文档自动识别到标准的 Chapter 目录关键词，已为你自动按字数分块！\n\n💡 如果你书中有特殊的章节名（例如 'Section' 或 '回'），请点击左侧菜单栏的【✂️重切】进行自定义切分！");
+                            return;
+                        }
+                    } else if (method === 'keyword') {
+                        const kw = splitKeyword.value.trim() || 'Chapter';
+                        const regex = new RegExp(`(?:^|\\n+)\\s*(${kw}[^\\n]*)`, 'gim');
+                        const matches = [...text.matchAll(regex)];
+                        if (matches.length > 0) {
+                            for (let i = 0; i < matches.length; i++) {
+                                const title = matches[i][1].trim();
+                                const startIndex = matches[i].index;
+                                const endIndex = (i + 1 < matches.length) ? matches[i + 1].index : text.length;
+                                let chapText = text.slice(startIndex, endIndex).replace(title, '').trim();
+                                if (chapText.length > 10) {
+                                    chapters.value.push({
+                                        id: 'chap_' + (chapters.value.length + 1),
+                                        title: title.slice(0, 35),
+                                        cleanText: chapText,
+                                        entities: extractEntities(chapText),
+                                        translations: { chatgpt: '', claude: '', gemini: '', deepseek: '' },
+                                        finalTranslation: ''
+                                    });
+                                }
+                            }
+                            showSplitModal.value = false;
+                            alert(`切分成功！按关键词 [${kw}] 共重新拆分为 ${chapters.value.length} 个章节。`);
+                        } else {
+                            alert(`找不到包含关键词 [${kw}] 的章节，请检查输入后重试！`);
+                            return;
+                        }
+                    } else if (method === 'chunk') {
+                        const size = parseInt(splitChunkSize.value) || 4000;
+                        let partIdx = 1;
+                        for (let i = 0; i < text.length; i += size) {
+                            let chunkText = text.slice(i, i + size).trim();
+                            if (chunkText.length > 20) {
+                                chapters.value.push({
+                                    id: 'chap_' + partIdx,
+                                    title: `第 ${partIdx} 部分 (约 ${Math.round(i/text.length*100)}% 进度处)`,
+                                    cleanText: chunkText,
+                                    entities: extractEntities(chunkText),
+                                    translations: { chatgpt: '', claude: '', gemini: '', deepseek: '' },
+                                    finalTranslation: ''
+                                });
+                                partIdx++;
+                            }
+                        }
+                        showSplitModal.value = false;
+                    }
+                    if (chapters.value.length > 0) currentChapterIndex.value = 0;
+                };
+
+                const handleFileUpload = async (event) => {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    isLoading.value = true;
+                    chapters.value = [];
+                    const fileName = file.name.toLowerCase();
+
+                    try {
+                        if (fileName.endsWith('.epub')) {
+                            await parseEpub(file);
+                        } else if (fileName.endsWith('.pdf')) {
+                            await parsePdf(file);
+                        } else if (fileName.endsWith('.html') || fileName.endsWith('.htm') || fileName.endsWith('.txt')) {
+                            let text = await file.text();
+                            if (autoConvertToSimp.value) text = toSimplified(text);
+                            
+                            const isTxt = fileName.endsWith('.txt');
+                            let { title, cleanText } = isTxt ? { title: file.name.replace('.txt', ''), cleanText: text } : cleanHtmlToText(text, 1, file.name);
+                            
+                            cleanText = cleanAndDehyphenateText(cleanText);
+                            rawFullText.value = cleanText;
+                            executeChapterSplit('auto');
+                        } else {
+                            alert("暂不支持该文件格式");
+                        }
+                    } catch (e) {
+                        alert("解析出错: " + e.message);
+                    } finally {
+                        isLoading.value = false;
+                        event.target.value = '';
+                    }
+                };
+
+                const parsePdf = async (file) => {
+                    if (!window.pdfjsLib) throw new Error("PDF 引擎组件未能正确加载，请检查网络后重试。");
+                    loadingText.value = '正在加载 PDF 解析引擎...';
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    const totalPages = pdf.numPages;
+                    
+                    loadingText.value = `正在逐页提取 PDF 文字 (共 ${totalPages} 页)...`;
+                    let fullText = '';
+                    
+                    for (let i = 1; i <= totalPages; i++) {
+                        loadingText.value = `正在深度提取文本 (${i}/${totalPages} 页)...`;
+                        const page = await pdf.getPage(i);
+                        const textContent = await page.getTextContent();
+                        
+                        let pageText = '';
+                        let lastY = null;
+                        for (const item of textContent.items) {
+                            const str = item.str;
+                            if (!str.trim()) continue;
+                            const currentY = item.transform[5];
+                            if (lastY !== null && Math.abs(currentY - lastY) > 8) {
+                                if (Math.abs(currentY - lastY) > 18) pageText += '\n\n';
+                                else pageText += '\n';
+                            } else if (pageText.length > 0 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
+                                pageText += ' ';
+                            }
+                            pageText += str;
+                            lastY = currentY;
+                        }
+                        fullText += pageText + '\n\n';
+                    }
+                    
+                    if (!fullText.trim() || fullText.trim().length < 50) {
+                        throw new Error("未能从该 PDF 中提取到有效文字。这个 PDF 可能是纯图片扫描版！建议先使用 OCR 工具转为 TXT 重新导入。");
+                    }
+                    
+                    if (autoConvertToSimp.value) fullText = toSimplified(fullText);
+                    
+                    loadingText.value = '正在进行跨行断词无缝缝合与段落重组...';
+                    fullText = cleanAndDehyphenateText(fullText);
+                    rawFullText.value = fullText;
+                    
+                    loadingText.value = '正在智能分析书籍章节结构...';
+                    executeChapterSplit('auto');
+                };
+
+                const parseEpub = async (file) => {
+                    loadingText.value = '正在读取电子书...';
+                    const zip = await JSZip.loadAsync(file);
+                    
+                    const containerXml = await zip.file("META-INF/container.xml")?.async("string");
+                    if (!containerXml) throw new Error("找不到 META-INF/container.xml");
+                    
+                    const parser = new DOMParser();
+                    const containerDoc = parser.parseFromString(containerXml, "application/xml");
+                    const opfPath = containerDoc.querySelector("rootfile")?.getAttribute("full-path");
+                    if (!opfPath) throw new Error("无法定位 OPF 文件");
+                    
+                    loadingText.value = '正在分析书籍目录与进行繁简识别...';
+                    const opfXml = await zip.file(opfPath)?.async("string");
+                    const opfDoc = parser.parseFromString(opfXml, "application/xml");
+                    
+                    const basePath = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1) : '';
+                    const manifest = {};
+                    opfDoc.querySelectorAll("manifest > item").forEach(item => {
+                        manifest[item.getAttribute("id")] = item.getAttribute("href");
+                    });
+                    
+                    const spineIds = [];
+                    opfDoc.querySelectorAll("spine > itemref").forEach(itemref => {
+                        const idref = itemref.getAttribute("idref");
+                        if (idref && manifest[idref]) spineIds.push(idref);
+                    });
+                    
+                    loadingText.value = '正在清洗正文与精准抽取专有名词...';
+                    let fullEpubText = '';
+                    for (const idref of spineIds) {
+                        const relHref = manifest[idref];
+                        const fullPath = basePath + relHref;
+                        const fileObj = zip.file(fullPath) || zip.file(relHref);
+                        if (!fileObj) continue;
+                        
+                        let contentStr = await fileObj.async("string");
+                        if (autoConvertToSimp.value) contentStr = toSimplified(contentStr);
+                        
+                        let { title, cleanText } = cleanHtmlToText(contentStr, 1, relHref);
+                        if (cleanText.length < 30) continue;
+                        
+                        if (autoConvertToSimp.value) {
+                            title = toSimplified(title);
+                            cleanText = toSimplified(cleanText);
+                        }
+                        
+                        fullEpubText += `\n\nChapter ${title}\n\n${cleanText}`;
+                    }
+                    
+                    fullEpubText = cleanAndDehyphenateText(fullEpubText);
+                    rawFullText.value = fullEpubText;
+                    executeChapterSplit('auto');
+                };
+
+                const cleanHtmlToText = (htmlStr, index, fallbackName = '') => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(htmlStr, 'text/html');
+                    doc.querySelectorAll('script, style, nav, footer, img, svg, iframe, header, noscript').forEach(el => el.remove());
+                    
+                    let title = '';
+                    const h1 = doc.querySelector('h1, h2');
+                    if (h1 && h1.innerText.trim().length > 0 && h1.innerText.trim().length < 50) {
+                        title = h1.innerText.trim();
+                    } else if (doc.title && doc.title.trim().length > 0 && !doc.title.toLowerCase().includes('untitled')) {
+                        title = doc.title.trim();
+                    } else {
+                        title = `第 ${index} 章`;
+                    }
+                    
+                    const blocks = [];
+                    const elements = doc.body.querySelectorAll('p, h1, h2, h3, h4, li, blockquote');
+                    if (elements.length > 0) {
+                        elements.forEach(el => {
+                            const text = el.innerText.trim();
+                            if (text.length > 0 && !blocks.includes(text)) blocks.push(text);
+                        });
+                    } else {
+                        const raw = doc.body.innerText || '';
+                        raw.split(/\r?\n+/).forEach(line => {
+                            const t = line.trim();
+                            if (t.length > 0) blocks.push(t);
+                        });
+                    }
+                    return { title, cleanText: blocks.join('\n\n') };
+                };
+
+                const extractEntities = (text) => {
+                    const res = { per: [], loc: [], org: [] };
+                    if (window.nlp) {
+                        try {
+                            const doc = window.nlp(text.slice(0, 6000));
+                            const getClean = (arr) => {
+                                const set = new Set();
+                                return arr.map(t => t.trim())
+                                          .filter(t => {
+                                              if (t.length <= 2 || t.length >= 25) return false;
+                                              const lower = t.toLowerCase();
+                                              if (STOP_WORDS.has(lower)) return false;
+                                              if (!/^[A-Z][a-zA-Z\s.-]+$/.test(t)) return false;
+                                              if (set.has(lower)) return false;
+                                              set.add(lower);
+                                              return true;
+                                          }).slice(0, 8);
+                            };
+                            res.per = getClean(doc.people().out('array'));
+                            res.loc = getClean(doc.places().out('array'));
+                            res.org = getClean(doc.organizations().out('array'));
+                        } catch (e) {}
+                    }
+                    
+                    const cnMatches = text.match(/《[^》]+》|([A-Z][a-z]+(?:·[A-Z][a-z]+)+)/g);
+                    if (cnMatches) {
+                        cnMatches.slice(0, 6).forEach(m => {
+                            if (!res.per.includes(m) && !res.loc.includes(m)) res.per.push(m);
+                        });
+                    }
+                    return res;
+                };
+
+                const convertAllToSimplified = () => {
+                    if (chapters.value.length === 0) return;
+                    isLoading.value = true;
+                    loadingText.value = '正在转换为规范简体...';
+                    setTimeout(() => {
+                        chapters.value.forEach(chap => {
+                            chap.title = toSimplified(chap.title);
+                            chap.cleanText = toSimplified(chap.cleanText);
+                            chap.entities = extractEntities(chap.cleanText);
+                            if (chap.finalTranslation) chap.finalTranslation = toSimplified(chap.finalTranslation);
+                        });
+                        glossary.value.forEach(term => {
+                            if (term.target) term.target = toSimplified(term.target);
+                        });
+                        isLoading.value = false;
+                        alert(`全书共 ${chapters.value.length} 个章节及术语表已全部洗为简体！`);
+                    }, 100);
+                };
+
+                const autoExtractAllToGlossary = () => {
+                    if (!currentChapter.value) return;
+                    const ent = currentChapter.value.entities;
+                    let count = 0;
+                    
+                    const pushIfNew = (word, cat) => {
+                        if (STOP_WORDS.has(word.toLowerCase())) return;
+                        if (!glossary.value.some(g => g.source.toLowerCase() === word.toLowerCase())) {
+                            glossary.value.unshift({ source: word, target: '', note: cat });
+                            count++;
+                        }
+                    };
+                    
+                    ent.per.forEach(w => pushIfNew(w, '人名'));
+                    ent.loc.forEach(w => pushIfNew(w, '地名'));
+                    ent.org.forEach(w => pushIfNew(w, '品牌/组织'));
+                    
+                    if (count > 0) {
+                        alert(`已把本章 ${count} 个专有名词提取到术语库！在下方补全译名后，正文将触发全词精准高亮。`);
+                    } else {
+                        alert("本章专有名词已经在术语表中了，或已被过滤。");
+                    }
+                };
+
+                const openExternalDict = (type) => {
+                    const word = encodeURIComponent(dictSearchWord.value.trim());
+                    if (!word) { alert("请先划选生词，或在框内输入！"); return; }
+                    
+                    let url = '';
+                    if (type === 'deepl') url = `https://www.deepl.com/translator#en/zh/${word}`;
+                    else if (type === 'youdao') url = `https://www.youdao.com/result?word=${word}&lang=en`;
+                    else if (type === 'wiki') url = `https://zh.wikipedia.org/wiki/Special:Search?search=${word}`;
+                    
+                    window.open(url, '_blank');
+                };
+
+                const lookupWord = (w) => {
+                    if (w) openExternalDict('deepl');
+                };
+
+                const addNewTerm = () => {
+                    if (!newTerm.value.source.trim()) return;
+                    glossary.value.unshift({
+                        source: newTerm.value.source.trim(),
+                        target: toSimplified(newTerm.value.target.trim()),
+                        note: newTerm.value.note.trim()
+                    });
+                    newTerm.value = { source: '', target: '', note: '人名' };
+                };
+
+                const addTermFromEntity = (word, category) => {
+                    if (!glossary.value.some(g => g.source.toLowerCase() === word.toLowerCase())) {
+                        glossary.value.unshift({ source: word, target: '', note: category });
+                    }
+                };
+
+                const removeTerm = (idx) => { glossary.value.splice(idx, 1); };
+                const clearGlossary = () => { if (confirm("确定要清空术语库吗？")) glossary.value = []; };
+
+                const copyPrompt = () => {
+                    if (!currentPromptText.value) return;
+                    navigator.clipboard.writeText(currentPromptText.value).then(() => {
+                        copySuccess.value = '复制成功!';
+                        setTimeout(() => copySuccess.value = '', 2000);
+                    });
+                };
+
+                return {
+                    chapters, currentChapterIndex, currentChapter, glossary, newTerm, 
+                    activeWorkspaceMode, activePromptTab, activeAiModelTab,
+                    isLoading, loadingText, copySuccess, hasEntities, currentPromptText, autoConvertToSimp,
+                    openDictModal, dictSearchWord, renderedHighlightText,
+                    rawFullText, showSplitModal, splitMethod, splitKeyword, splitChunkSize,
+                    handleFileUpload, addNewTerm, addTermFromEntity, removeTerm, clearGlossary, copyPrompt,
+                    convertAllToSimplified, autoExtractAllToGlossary, openExternalDict, lookupWord, handleTextSelection,
+                    addDictWordToGlossary, exportFullEpub, loadAiToFinal, exportChapterFinal, executeChapterSplit
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

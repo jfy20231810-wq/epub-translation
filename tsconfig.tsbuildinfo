@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/types.ts","./src/components/ChapterContent.tsx","./src/components/ChapterList.tsx","./src/components/ChapterViewer.tsx","./src/components/UploadButton.tsx","./src/components/icons.tsx","./src/utils/epubParser.ts"],"version":"5.9.3"}
